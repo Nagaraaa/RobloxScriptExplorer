@@ -12,7 +12,7 @@ try {
     if (Test-Path -LiteralPath $destination) { throw 'Ce paquet existe déjà. Choisissez un nouveau -DistDirectory pour préserver ses données locales.' }
     & python -m PyInstaller --noconfirm --onedir --windowed --name RobloxScriptExplorer --hidden-import compression.zstd --distpath $distRoot --workpath .local\pyinstaller --specpath .local explorer_gui.py
     if ($LASTEXITCODE -ne 0) { throw "La construction de l'application a échoué." }
-    foreach ($file in @('Extract-RobloxClient.ps1','RobloxReadOnlyProbe.cs','Build-Backend.ps1','backend.lock.json','README.md','LICENSE','THIRD_PARTY.md')) {
+    foreach ($file in @('Extract-RobloxClient.ps1','RobloxReadOnlyProbe.cs','Build-Backend.ps1','backend.lock.json','patch_backend.py','backend-fixes.json','README.md','LICENSE','THIRD_PARTY.md')) {
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination $destination -Force
     }
     if (Test-Path -LiteralPath .\tools) {

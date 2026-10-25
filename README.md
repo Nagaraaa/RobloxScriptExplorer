@@ -71,9 +71,25 @@ $env:RSE_RUN_INTEGRATION='1'
 python -m unittest discover -s tests -v
 ```
 
-Les tests d'intégration nécessitent les moteurs locaux construits avec `-WithCompiler`. Ils utilisent un programme de test synthétique ; aucun script de jeu n'est inclus dans le dépôt. Le workflow Windows construit les moteurs verrouillés et exécute ces tests.
+Les tests d'intégration nécessitent les moteurs locaux construits avec `-WithCompiler`. Les 13 tests comprennent 33 aller-retours de programmes synthétiques à trois niveaux d'optimisation : compilation, décompilation, vérification de syntaxe et comparaison des résultats exécutés. Les programmes couvrent notamment les conditions avec effets de bord, les sorties de branches, les boucles, `break`, `continue` et les appels parenthésés. Aucun script de jeu n'est exécuté ou inclus dans le dépôt. Le workflow Windows construit les moteurs verrouillés et exécute ces tests.
 
 Le 25 octobre 2026, une capture locale de 1 207 instances / 1 085 contenus distincts a produit 1 207 sorties Luau : 1 092 classées **Reconstruit** et 115 **Partiel**. Parmi les 1 207 sorties, 1 145 passent la vérification de syntaxe. Les scripts de cette capture restent locaux et ne sont pas publiés.
+
+### Corrections de récupération v2
+
+| Mesure sur la même capture | Initial | Avec les corrections |
+|---|---:|---:|
+| Sorties sans diagnostic détecté | 1 092 | 1 159 |
+| Sorties partielles signalées | 115 | 48 |
+| Sorties acceptées par le compilateur | 1 145 | 1 207 |
+
+Les 67 changements d'état concernent les cas initialement partiels ; aucun nouveau script n'est devenu partiel dans cette comparaison. Ce bilan ne prouve pas l'équivalence des scripts du jeu : celle-ci n'a pas été testée par exécution.
+
+Les corrections transportent explicitement les sauts qui sortent d'une branche, préservent les passages vers un bloc `else` sans réévaluer ses conditions et réinitialisent les indicateurs de sortie dans les boucles. Lorsqu'une région présente plusieurs sorties incompatibles, une reconstruction conservatrice reste marquée partielle et le désassemblage est disponible.
+
+L'émission des appels parenthésés et des instructions après un terminateur est également corrigée. Les instructions conservées après un terminateur sont signalées, même si le texte compile. La détection de diagnostics examine uniquement les commentaires du moteur, jamais les chaînes de caractères du jeu. Les écritures de cache concurrentes sont protégées.
+
+`patch_backend.py` applique `backend-fixes.json` au moteur téléchargé. Les empreintes du contenu avant et après correction sont verrouillées, l'application est idempotente et une autre version de source est refusée. Le cache de validation utilise une nouvelle révision, afin de ne pas réutiliser les anciens états.
 
 ## Construire l'application Windows
 

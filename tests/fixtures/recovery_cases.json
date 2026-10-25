@@ -1,0 +1,13 @@
+{
+  "guard_or": "local obj = if a > 0 then {value=a} else nil\n if not obj or obj.value + b > 5 then return -1 end\n return obj.value * b",
+  "guard_side_effect": "local n=0\n local function hit(value) n+=1 return value end\n if hit(a>0) and (hit(b>2) or hit(a+b<4)) then n+=20 else n+=30 end\n return n",
+  "loop_guard": "local total=0\n for i=1,6 do\n  local obj=if (i+a)%3 == 0 then nil else {value=i}\n  if not obj or obj.value+b>5 then total+=2 continue end\n  total+=obj.value\n end\n return total",
+  "nested_return": "if a>0 then\n  local obj=if b>0 then {v=b} else nil\n  if not obj or obj.v>a then return 7 end\n  return obj.v*3\n end\n return -a",
+  "loop_return": "local total=0\n for i=1,6 do\n  if i+a>3 then\n   if b<i or a==2 then return i*10+total end\n  end\n  total+=i\n end\n return total",
+  "nested_loops": "local total=0\n for i=1,4 do\n  for j=1,4 do\n   if i+a>3 then\n    if b<j then break end\n    total+=i*j\n   end\n  end\n end\n return total",
+  "while_continue": "local i,total=0,0\n while i<6 do\n  i+=1\n  if (i+a)%2==0 then\n   if b>i then total+=3 continue end\n  end\n  total+=i\n end\n return total",
+  "prefix_call": "local n=0\n local function one(x) n+=x end\n local function two(x) n-=x end\n local function run()\n  (if a>0 then one else two)(b)\n end\n run()\n return n",
+  "return_break": "local total=0\n for i=1,5 do\n  if i+a>3 then\n   if b>i then break end\n   return -i\n  end\n  total+=i\n end\n return total",
+  "closure_guard": "local saved=0\n local function get(x)\n  if x>0 then\n   if x+b>4 then return x*3 end\n  end\n  return 9\n end\n for i=1,4 do saved+=get(a+i) end\n return saved",
+  "prefix_first": "local value=0\nlocal function put(x) value+=x end\nlocal slot={fn=if a>0 then put else nil}\nlocal function fire()\n (slot.fn or put)(b)\nend\nfire()\nreturn value"
+}

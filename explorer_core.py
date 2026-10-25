@@ -9,6 +9,8 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -16,6 +18,7 @@ from typing import Callable
 MAX_INPUT = 32 * 1024 * 1024
 MAX_OUTPUT = 32 * 1024 * 1024
 CREATE_NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+VALIDATION_REVISION = 'recovery-v2'
 
 
 class ExplorerError(Exception):
@@ -46,7 +49,17 @@ def write_json(path: Path, value) -> None:
     with tempfile.NamedTemporaryFile('w', encoding='utf-8', dir=path.parent, delete=False) as out:
         json.dump(value, out, ensure_ascii=False, indent=2)
         temp = Path(out.name)
-    os.replace(temp, path)
+    try:
+        for attempt in range(6):
+            try:
+                os.replace(temp, path)
+                break
+            except PermissionError:
+                if attempt == 5:
+                    raise
+                time.sleep(0.01 * (attempt + 1))
+    finally:
+        temp.unlink(missing_ok=True)
 
 
 @dataclass
@@ -167,6 +180,12 @@ def tokens(source: str):
     return result
 
 
+def collect_diagnostics(source: str) -> list[str]:
+    """Only engine-authored comment markers count, never words in game strings."""
+    return [match.group().strip() for match in TOKEN.finditer(source)
+            if re.match(r'^--\s*luaudec:', match.group())]
+
+
 def analyze(source: str) -> dict:
     parts = tokens(source)
     newlines = [match.start() for match in re.finditer('\n', source)]
@@ -265,6 +284,12 @@ class Decompiler:
         self.cache.mkdir(parents=True, exist_ok=True)
         self.compiler = compiler if compiler and compiler.is_file() else None
         self.compiler_identity = hashlib.sha256(read_bounded(self.compiler)).hexdigest() if self.compiler else 'none'
+        self._locks_guard = threading.Lock()
+        self._content_locks = {}
+
+    def _content_lock(self, script, encoding):
+        with self._locks_guard:
+            return self._content_locks.setdefault((script.digest, encoding), threading.RLock())
 
     def _run(self, file: Path, mode: str, encoding: str = 'roblox') -> str:
         data = read_bounded(file)
@@ -297,6 +322,10 @@ class Decompiler:
         return self.cache / self.identity / encoding / (script.digest + '.' + mode + '.json')
 
     def run(self, script: Script, mode='source', encoding='roblox') -> str:
+        with self._content_lock(script, encoding):
+            return self._run_cached(script, mode, encoding)
+
+    def _run_cached(self, script: Script, mode='source', encoding='roblox') -> str:
         if mode not in ('source', 'disasm', 'json', 'info') or encoding not in ('roblox', 'standard', 'auto'):
             raise ExplorerError('Mode de décompilation invalide.')
         # Verify on each use, including cache hits, to avoid mixing modified captures.
@@ -322,14 +351,17 @@ class Decompiler:
             return None
 
     def restore_cached(self, script: Script, encoding='roblox') -> bool:
+        with self._content_lock(script, encoding):
+            return self._restore_cached(script, encoding)
+
+    def _restore_cached(self, script: Script, encoding='roblox') -> bool:
         source = self.cached_source(script, encoding)
         if not source:
             return False
         script.source, script.analysis = source, analyze(source)
-        script.diagnostics = [line.strip() for line in source.splitlines()
-                              if re.search(r'--\s*luaudec:|unsupported|could not lift|failed to lift', line, re.I)]
+        script.diagnostics = collect_diagnostics(source)
         script.status = 'Partiel' if script.diagnostics else 'Reconstruit'
-        validation = self.cache_path(script, 'validation-' + self.compiler_identity, encoding)
+        validation = self.cache_path(script, 'validation-' + VALIDATION_REVISION + '-' + self.compiler_identity, encoding)
         if validation.is_file():
             try:
                 saved = json.loads(read_bounded(validation).decode('utf-8'))
@@ -340,6 +372,10 @@ class Decompiler:
         return True
 
     def decompile(self, script: Script, encoding='roblox') -> Script:
+        with self._content_lock(script, encoding):
+            return self._decompile_locked(script, encoding)
+
+    def _decompile_locked(self, script: Script, encoding='roblox') -> Script:
         try:
             source = self.run(script, 'source', encoding)
             if not source.strip():
@@ -350,7 +386,7 @@ class Decompiler:
                 script.syntax = self.check_syntax(source)
                 if script.syntax != 'Syntaxe vérifiée':
                     script.status = 'Partiel'
-            write_json(self.cache_path(script, 'validation-' + self.compiler_identity, encoding),
+            write_json(self.cache_path(script, 'validation-' + VALIDATION_REVISION + '-' + self.compiler_identity, encoding),
                        {'sourceSHA256': hashlib.sha256(source.encode('utf-8')).hexdigest(),
                         'syntax': script.syntax, 'status': script.status})
         except (ExplorerError, OSError) as exc:

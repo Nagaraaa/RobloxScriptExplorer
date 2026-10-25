@@ -9,6 +9,8 @@
 
 Le dépôt amont consulté ne fournit pas de licence générale explicite. Ses sources et binaires ne sont donc pas inclus dans ce dépôt public. `Build-Backend.ps1` récupère les sources verrouillées et les compile sur la machine de l’utilisateur. La licence MIT de Roblox Script Explorer couvre uniquement le code original de cette application.
 
+Les corrections originales de Roblox Script Explorer sont fournies séparément dans `backend-fixes.json` et appliquées localement par `patch_backend.py`. La recette contient les positions des modifications, le code de remplacement et des empreintes de contrôle ; elle ne contient pas une copie des fichiers amont. Les binaires reconstruits restent exclus du dépôt.
+
 ## Luau
 
 https://github.com/luau-lang/luau — licence MIT, disponible dans le dépôt amont. Le compilateur optionnel ne sert qu'à vérifier la syntaxe des sources reconstruites ; ces sources ne sont pas exécutées.

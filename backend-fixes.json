@@ -1,0 +1,227 @@
+{
+  "id": "recovery-v2",
+  "files": [
+    {
+      "path": "src/lift/Lift.cpp",
+      "originalSHA256": "f1b4070dc087606d67cf72512eacabb4794f78a5aaf6e36fc209195d4276d71b",
+      "patchedSHA256": "f741971de3ec452c1b4ccd51d3134a9fa3becd98489252bd0315b3e14163884a",
+      "edits": [
+        {
+          "startLine": 923,
+          "endLine": 923,
+          "replacement": [
+            "        std::vector<std::string> escapeFlags;\n"
+          ]
+        },
+        {
+          "startLine": 960,
+          "endLine": 961,
+          "replacement": [
+            "        return Snapshot{pending, vars, scopeStack, scopeCounter, names->counter, used, pendingEscape, escapeFlags};\n"
+          ]
+        },
+        {
+          "startLine": 972,
+          "endLine": 972,
+          "replacement": [
+            "        escapeFlags = s.escapeFlags;\n"
+          ]
+        },
+        {
+          "startLine": 2584,
+          "endLine": 2585,
+          "replacement": [
+            "        // Carry a forward edge through this region without recursively consuming itself.\n",
+            "        pendingEscape.reset();\n"
+          ]
+        },
+        {
+          "startLine": 2586,
+          "endLine": 2586,
+          "replacement": [
+            "        if (pendingEscape && (pendingEscape->target != esc.target || pendingEscape->flag != esc.flag))\n",
+            "            throw LiftError(\"overlapping unresolved forward edges\");\n",
+            "        pendingEscape = esc;\n"
+          ]
+        },
+        {
+          "startLine": 2799,
+          "endLine": 2799,
+          "replacement": [
+            "    void assignedEscapeFlags(const std::vector<StmtP>& body, std::set<std::string>& assigned) const\n",
+            "    {\n",
+            "        for (const StmtP& stmt : body)\n",
+            "        {\n",
+            "            if (stmt->kind == StmtKind::Assign)\n",
+            "                for (const ExprP& target : stmt->targets)\n",
+            "                    if (target->kind == ExprKind::Local && std::find(escapeFlags.begin(), escapeFlags.end(), target->str) != escapeFlags.end())\n",
+            "                        assigned.insert(target->str);\n",
+            "            assignedEscapeFlags(stmt->body, assigned);\n",
+            "            assignedEscapeFlags(stmt->elseBody, assigned);\n",
+            "            for (const IfClause& clause : stmt->clauses)\n",
+            "                assignedEscapeFlags(clause.body, assigned);\n",
+            "        }\n",
+            "    }\n",
+            "\n"
+          ]
+        },
+        {
+          "startLine": 2801,
+          "endLine": 2801,
+          "replacement": [
+            "        std::set<std::string> assigned;\n",
+            "        assignedEscapeFlags(loopStmt->body, assigned);\n",
+            "        for (const std::string& flag : assigned)\n",
+            "        {\n",
+            "            StmtP reset = mkStmt(StmtKind::Assign);\n",
+            "            reset->targets.push_back(mkName(ExprKind::Local, flag));\n",
+            "            reset->values.push_back(mkExpr(ExprKind::False));\n",
+            "            loopStmt->body.insert(loopStmt->body.begin(), reset);\n",
+            "        }\n"
+          ]
+        },
+        {
+          "startLine": 3441,
+          "endLine": 3441,
+          "replacement": [
+            "        // A non-loop forward edge can skip the continuation of an enclosing branch.\n",
+            "        // Carry its predicate outward instead of discarding the edge or its statements.\n",
+            "        if (options.recoverForwardEdges && F > end && F <= int(an.insns.size()))\n",
+            "        {\n",
+            "            Escape esc;\n",
+            "            esc.target = F;\n",
+            "            esc.flag = newName(\"branchEscaped\");\n",
+            "            used.insert(esc.flag);\n",
+            "            escapeFlags.push_back(esc.flag);\n",
+            "            StmtP set = mkStmt(StmtKind::Assign);\n",
+            "            set->targets.push_back(mkName(ExprKind::Local, esc.flag));\n",
+            "            set->values.push_back(mkExpr(ExprKind::True));\n",
+            "            emit(makeIf(negate(chain.cond), {set}));\n",
+            "            pendingEscape = esc;\n",
+            "            return S;\n",
+            "        }\n",
+            "\n"
+          ]
+        },
+        {
+          "startLine": 3504,
+          "endLine": 3504,
+          "replacement": [
+            "        std::optional<Escape> thenEscape = pendingEscape;\n",
+            "        pendingEscape.reset();\n",
+            "        std::optional<Escape> elseEscape;\n"
+          ]
+        },
+        {
+          "startLine": 3514,
+          "endLine": 3514,
+          "replacement": [
+            "            elseEscape = pendingEscape;\n",
+            "            pendingEscape.reset();\n",
+            "            if (thenEscape && thenEscape->target < joinIdx)\n",
+            "            {\n",
+            "                if (thenEscape->target != F)\n",
+            "                    throw LiftError(\"forward edge enters the middle of an else region\");\n",
+            "                clause.body.push_back(makeIf(mkName(ExprKind::Local, thenEscape->flag), elseBody));\n",
+            "                s->clauses.front() = clause;\n",
+            "                thenEscape.reset();\n",
+            "            }\n"
+          ]
+        },
+        {
+          "startLine": 3516,
+          "endLine": 3517,
+          "replacement": [
+            "            if (!thenEscape && !elseEscape && !tail && clause.body.size() == 1 && elseBody.size() == 1 && isSimpleAssign(clause.body[0]) && isSimpleAssign(elseBody[0]) &&\n"
+          ]
+        },
+        {
+          "startLine": 3545,
+          "endLine": 3545,
+          "replacement": [
+            "        if (thenEscape && elseEscape)\n",
+            "        {\n",
+            "            if (thenEscape->target != elseEscape->target)\n",
+            "                throw LiftError(\"branches have incompatible forward escape targets\");\n",
+            "            StmtP merge = mkStmt(StmtKind::Assign);\n",
+            "            merge->targets.push_back(mkName(ExprKind::Local, thenEscape->flag));\n",
+            "            merge->values.push_back(mkOr(mkName(ExprKind::Local, thenEscape->flag), mkName(ExprKind::Local, elseEscape->flag)));\n",
+            "            pushStmt(merge);\n",
+            "        }\n",
+            "        pendingEscape = thenEscape ? thenEscape : elseEscape;\n"
+          ]
+        },
+        {
+          "startLine": 3609,
+          "endLine": 3610,
+          "replacement": [
+            "        Lifter lifter(m, p, options, upvals, names, inherited);\n"
+          ]
+        },
+        {
+          "startLine": 3615,
+          "endLine": 3615,
+          "replacement": [
+            "        if (options.recoverForwardEdges && std::string(e.what()).find(\"forward\") != std::string::npos)\n",
+            "        {\n",
+            "            LiftOptions conservative = options;\n",
+            "            conservative.recoverForwardEdges = false;\n",
+            "            FunctionP recovered = Lifter::liftProto(m, p, conservative, upvals, names, inherited, selfParam);\n",
+            "            recovered->body.insert(recovered->body.begin(), mkComment(\"luaudec: conservative reconstruction of overlapping forward edges; review disassembly\"));\n",
+            "            return recovered;\n",
+            "        }\n"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "src/emit/Emit.cpp",
+      "originalSHA256": "049fd329ae2cada26f6983de7b81da10004a15480d8881f1b6346c6a35eda294",
+      "patchedSHA256": "2957129b1fbbdbc7ed1b2d11aa891d3368e637163306dc860046d5fa23adb9e7",
+      "edits": [
+        {
+          "startLine": 473,
+          "endLine": 474,
+          "replacement": [
+            "            return ind + \"do\\n\" + indentStr(indent + 1) + call + \"\\n\" + ind + \"end\\n\";\n"
+          ]
+        },
+        {
+          "startLine": 549,
+          "endLine": 551,
+          "replacement": [
+            "    for (size_t index = 0; index < stmts.size(); ++index)\n",
+            "    {\n",
+            "        const StmtP& s = stmts[index];\n",
+            "        bool terminal = s->kind == StmtKind::Return || s->kind == StmtKind::Break || s->kind == StmtKind::Continue;\n",
+            "        bool trailingCode = false;\n",
+            "        for (size_t next = index + 1; terminal && next < stmts.size(); ++next)\n",
+            "            trailingCode = trailingCode || stmts[next]->kind != StmtKind::Comment;\n",
+            "        if (terminal && trailingCode)\n",
+            "        {\n",
+            "            out += indentStr(indent) + \"-- luaudec: trailing statements after terminator preserved; control flow needs review\\n\";\n",
+            "            out += indentStr(indent) + \"do\\n\" + emitStmt(s, indent + 1) + indentStr(indent) + \"end\\n\";\n",
+            "        }\n",
+            "        else\n",
+            "            out += emitStmt(s, indent);\n",
+            "    }\n"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "src/lift/Lift.h",
+      "originalSHA256": "a2af56be7b71f0d189459bd33a1653be39830967d3f039043c14b850382a9884",
+      "patchedSHA256": "f5d676f85ec9426304babe2f2764fb49a83aaea8854f381db5380bc36e6229bb",
+      "edits": [
+        {
+          "startLine": 15,
+          "endLine": 15,
+          "replacement": [
+            "    bool recoverForwardEdges = true;\n"
+          ]
+        }
+      ]
+    }
+  ]
+}
