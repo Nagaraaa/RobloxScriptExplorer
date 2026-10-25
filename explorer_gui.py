@@ -121,7 +121,7 @@ class Explorer(tk.Tk):
         self.after(100, self._poll)
         self.protocol('WM_DELETE_WINDOW', self.close)
         self.bind('<Control-o>', lambda e: self.open_folder())
-        self.bind('<Control-f>', lambda e: self.find_entry.focus_set())
+        self.bind('<Control-f>', lambda e: self.focus_find())
         self.bind('<Control-g>', lambda e: self.go_line())
         self.bind('<Control-s>', lambda e: self.export_source())
         if capture_path:
@@ -192,8 +192,9 @@ class Explorer(tk.Tk):
                                       ('Décompiler tout', self.decompile_all, False), ('Exporter', self.export_project, False)]:
             ttk.Button(toolbar, text=label, command=action, style='Accent.TButton' if accent else 'TButton').pack(side='left', padx=4)
         ttk.Button(toolbar, text='Arrêter', command=self.stop).pack(side='right', padx=4)
-        ttk.Combobox(toolbar, textvariable=self.encoding, values=('roblox', 'standard', 'auto'),
-                     state='readonly', width=11).pack(side='right', padx=10)
+        self.encoding_combo = ttk.Combobox(toolbar, textvariable=self.encoding, values=('roblox', 'standard', 'auto'),
+                                           state='readonly', width=11)
+        self.encoding_combo.pack(side='right', padx=10)
         self.encoding.trace_add('write', self.encoding_changed)
 
         cards = tk.Frame(self, bg=BG, padx=25, pady=15)
@@ -348,6 +349,9 @@ class Explorer(tk.Tk):
                             'Vous pouvez aussi choisir un luaudec.exe déjà compilé dans le menu Moteur.', parent=self)
 
     def choose_engine(self):
+        if self.batch_running:
+            self.status.set('Arrêtez le lot avant de changer de moteur.')
+            return
         selected = filedialog.askopenfilename(title='Choisir luaudec.exe', filetypes=[('Exécutable', '*.exe')], parent=self)
         if selected and self._configure_engine(selected):
             if self.capture:
@@ -553,6 +557,7 @@ class Explorer(tk.Tk):
         if not self.capture or not self.need_engine() or self.batch_running:
             return
         self.batch_running = True
+        self.encoding_combo.configure(state='disabled')
         self.cancel.clear()
         capture, engine, encoding, generation = self.capture, self.engine, self.encoding.get(), self.generation
         self.progress.configure(value=0, maximum=len(capture.scripts))
@@ -580,11 +585,16 @@ class Explorer(tk.Tk):
             return completed
         def done(total):
             self.batch_running = False
+            self.encoding_combo.configure(state='readonly')
+            self.rebuild_tree()
             self.update_counts()
             self.status.set(f'Lot {"arrêté" if self.cancel.is_set() else "terminé"} · {total} scripts traités. Aucun code récupéré exécuté.')
             if self.selected:
                 self.display_script(self.selected)
-        self._task(batch, done, on_error=lambda: setattr(self, 'batch_running', False))
+        def failed():
+            self.batch_running = False
+            self.encoding_combo.configure(state='readonly')
+        self._task(batch, done, on_error=failed)
 
     def stop(self):
         self.cancel.set()
@@ -624,9 +634,14 @@ class Explorer(tk.Tk):
         else:
             self.status.set('Texte introuvable dans le script affiché.')
 
+    def focus_find(self):
+        self.notebook.select(0)
+        self.after_idle(self.find_entry.focus_set)
+
     def go_line(self):
         line = simpledialog.askinteger('Aller à la ligne', 'Numéro de ligne :', minvalue=1, parent=self)
         if line:
+            self.notebook.select(0)
             self.code.go(line)
 
     def global_search(self):
