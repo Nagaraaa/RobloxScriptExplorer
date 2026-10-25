@@ -21,7 +21,8 @@ def record(name='Main', path='Game/ReplicatedStorage/Main'):
 class CaptureTests(unittest.TestCase):
     def test_paths_cannot_escape_capture(self):
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
+            # GitHub's Windows runner can expose TEMP through an 8.3 alias.
+            root = Path(directory).resolve()
             self.assertEqual(contained(root, 'bytecode/a.luac'), root / 'bytecode/a.luac')
             for bad in ('../outside.luac', str(root.parent / 'outside.luac')):
                 with self.assertRaises(ExplorerError):
