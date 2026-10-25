@@ -1,0 +1,16 @@
+.local/
+captures/
+third_party/
+tools/*.exe
+tools/*.dll
+tools/build-info.json
+build/
+dist/
+*.spec
+__pycache__/
+*.pyc
+*.rsb
+*.luac
+*.luauc
+*.zip
+.venv/

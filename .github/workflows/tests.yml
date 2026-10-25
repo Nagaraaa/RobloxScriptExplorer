@@ -1,0 +1,25 @@
+name: Windows verification
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: '3.14'
+      - name: Build pinned local backend and syntax checker
+        shell: pwsh
+        run: ./Build-Backend.ps1 -WithCompiler
+      - name: Unit and native integration tests
+        shell: pwsh
+        env:
+          RSE_RUN_INTEGRATION: '1'
+        run: python -m unittest discover -s tests -v
+      - name: Compile Python sources
+        run: python -m py_compile explorer_core.py explorer_gui.py validate_extraction.py

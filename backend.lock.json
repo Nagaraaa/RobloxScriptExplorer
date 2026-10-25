@@ -1,0 +1,7 @@
+{
+  "repository": "https://github.com/stolevchristian/LuauDecompiler.git",
+  "commit": "6d0a7a2ef292171f306bf022ad56362139ac738e",
+  "luauCommit": "7a3d37eea5b0b26c97f05f6137ee0e411e6cd6ed",
+  "supportedBytecode": [3, 14],
+  "redistribution": "Not vendored. Build locally from pinned upstream sources."
+}
