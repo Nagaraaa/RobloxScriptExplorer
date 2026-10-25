@@ -22,4 +22,4 @@ jobs:
           RSE_RUN_INTEGRATION: '1'
         run: python -m unittest discover -s tests -v
       - name: Compile Python sources
-        run: python -m py_compile explorer_core.py explorer_gui.py validate_extraction.py
+        run: python -m py_compile explorer_core.py explorer_gui.py explorer_theme.py validate_extraction.py

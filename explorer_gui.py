@@ -9,6 +9,7 @@ import re
 import sys
 import threading
 import tkinter as tk
+import tkinter.font as tkfont
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
@@ -17,21 +18,23 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 from explorer_core import (Capture, Decompiler, ExplorerError, Script, TOKEN, analyze,
                            capture_live, export_capture, load_capture,
                            resolve_dependencies, write_json)
+from explorer_theme import MODES, THEMES, resolve, set_title_bar
 
 ROOT = Path(sys.executable).resolve().parent if getattr(sys, 'frozen', False) else Path(__file__).resolve().parent
-BG, PANEL, CARD = '#10151e', '#171e2a', '#202a39'
-TEXT, MUTED, ACCENT, GREEN = '#e7edf5', '#92a3ba', '#ffb454', '#79d5b4'
+CODE_TAGS = ('keyword', 'string', 'number', 'comment', 'function')
 
 
 class CodeView(tk.Frame):
-    def __init__(self, master):
-        super().__init__(master, bg=BG)
-        self.gutter = tk.Canvas(self, width=56, bg=BG, highlightthickness=0)
+    def __init__(self, master, app):
+        super().__init__(master, highlightthickness=app.px(2))
+        self.app = app
+        self.gutter = tk.Canvas(self, width=app.px(60), highlightthickness=0)
         self.gutter.pack(side='left', fill='y')
-        self.text = tk.Text(self, wrap='none', bg=BG, fg=TEXT, insertbackground=TEXT,
-                            selectbackground='#365473', relief='flat', borderwidth=0,
-                            font=('Consolas', 11), padx=12, pady=14, undo=False,
-                            tabs=('4c',), state='disabled')
+        self.text = tk.Text(self, wrap='none', relief='flat', borderwidth=0, highlightthickness=0,
+                            font=app.fonts['code'], padx=app.px(12), pady=app.px(14), undo=False,
+                            state='disabled', spacing1=1, spacing3=1)
+        # Four-space tab stops instead of 4 cm ones.
+        self.text.configure(tabs=(tkfont.Font(self, font=app.fonts['code']).measure('    '),))
         vertical = ttk.Scrollbar(self, orient='vertical', command=self.text.yview)
         horizontal = ttk.Scrollbar(self, orient='horizontal', command=self.text.xview)
         vertical.pack(side='right', fill='y')
@@ -39,13 +42,22 @@ class CodeView(tk.Frame):
         self.text.pack(fill='both', expand=True)
         self.text.configure(yscrollcommand=lambda a, b: (vertical.set(a, b), self.redraw()),
                             xscrollcommand=horizontal.set)
-        for tag, color in [('keyword', '#c6a0f6'), ('string', '#a7d99b'), ('number', '#f1b477'),
-                           ('comment', '#72849a'), ('function', '#8bd5ee')]:
-            self.text.tag_configure(tag, foreground=color)
-        self.text.tag_configure('match', background='#685022', foreground='#ffffff')
-        self.text.tag_configure('active_match', background='#c48a32', foreground='#10151e')
         self.text.bind('<Configure>', lambda e: self.redraw())
         self._pending = False
+        app.focus_ring(self, self.text, 'code_bg')
+        app.on_theme(self.apply_theme)
+
+    def apply_theme(self, t):
+        self.configure(bg=t['code_bg'])
+        self.gutter.configure(bg=t['code_bg'])
+        self.text.configure(bg=t['code_bg'], fg=t['text'], insertbackground=t['text'],
+                            selectbackground=t['selection'], selectforeground=t['on_selection'],
+                            inactiveselectbackground=t['selection'])
+        for tag in CODE_TAGS:
+            self.text.tag_configure(tag, foreground=t[tag])
+        self.text.tag_configure('match', background=t['match'], foreground=t['on_match'])
+        self.text.tag_configure('active_match', background=t['active_match'], foreground=t['on_active_match'])
+        self.redraw()
 
     def redraw(self):
         if getattr(self, '_pending', False):
@@ -62,7 +74,8 @@ class CodeView(tk.Frame):
             if box is None:
                 break
             line = index.split('.')[0]
-            self.gutter.create_text(43, box[1], text=line, anchor='ne', fill='#61758f', font=('Consolas', 10))
+            self.gutter.create_text(self.app.px(46), box[1] + 1, text=line, anchor='ne',
+                                    fill=self.app.palette['gutter'], font=self.app.fonts['gutter'])
             index = self.text.index(f'{index}+1line')
 
     def show(self, content: str, highlight=True):
@@ -92,13 +105,56 @@ class CodeView(tk.Frame):
         self.redraw()
 
 
+class ThemeSwitch(tk.Frame):
+    """Light/dark switch, usable with the mouse, Tab and Space/Enter."""
+
+    def __init__(self, master, app):
+        super().__init__(master, takefocus=1, cursor='hand2', highlightthickness=app.px(2),
+                         padx=app.px(12), pady=app.px(8))
+        self.app = app
+        self.hovered = False
+        self.label = tk.Label(self, text='Thème sombre', font=app.fonts['body'], cursor='hand2')
+        self.label.pack(side='left', padx=(0, app.px(10)))
+        self.track = tk.Canvas(self, width=app.px(44), height=app.px(24), highlightthickness=0, cursor='hand2')
+        self.track.pack(side='left')
+        for widget in (self, self.label, self.track):
+            widget.bind('<Button-1>', self.toggle)
+            widget.bind('<Enter>', lambda e: self._hover(True))
+            widget.bind('<Leave>', lambda e: self._hover(False))
+        self.bind('<space>', self.toggle)
+        self.bind('<Return>', self.toggle)
+        app.focus_ring(self, self, 'bg')
+        app.on_theme(self.apply_theme)
+
+    def toggle(self, _=None):
+        self.app.set_theme('light' if self.app.theme == 'dark' else 'dark')
+        return 'break'
+
+    def _hover(self, value):
+        self.hovered = value
+        self.apply_theme(self.app.palette)
+
+    def apply_theme(self, t):
+        background = t['hover'] if self.hovered else t['bg']
+        on = self.app.theme == 'dark'
+        self.configure(bg=background)
+        self.label.configure(bg=background, fg=t['text'])
+        self.track.configure(bg=background)
+        self.track.delete('all')
+        w, h, px = self.app.px(44), self.app.px(24), self.app.px
+        fill = t['accent'] if on else t['muted']
+        self.track.create_oval(0, 0, h, h, fill=fill, outline=fill)
+        self.track.create_oval(w - h, 0, w, h, fill=fill, outline=fill)
+        self.track.create_rectangle(h // 2, 0, w - h // 2, h, fill=fill, outline=fill)
+        x = w - h // 2 if on else h // 2
+        knob = t['on_accent'] if on else t['surface']
+        self.track.create_oval(x - px(8), h // 2 - px(8), x + px(8), h // 2 + px(8), fill=knob, outline=knob)
+
+
 class Explorer(tk.Tk):
     def __init__(self, capture_path=None, engine_path=None):
         super().__init__()
         self.title('Roblox Script Explorer')
-        self.geometry('1440x920')
-        self.minsize(1060, 700)
-        self.configure(bg=BG)
         self.local = ROOT / '.local'
         self.local.mkdir(exist_ok=True)
         self.capture: Capture | None = None
@@ -115,10 +171,24 @@ class Explorer(tk.Tk):
         self.kind_filter = tk.StringVar(value='Tous')
         self.status = tk.StringVar(value='Ouvrez une capture pour commencer.')
         self.settings = self._read_settings()
-        self._style()
+        # Pixel sizes are written for 96 DPI and scaled to the screen.
+        self.scale = self.winfo_fpixels('1i') / 96
+        self.geometry(f'{self.px(1440)}x{self.px(920)}')
+        self.minsize(self.px(1060), self.px(700))
+        self._fonts()
+        self.theme_mode = tk.StringVar(value=self.settings.get('theme') if self.settings.get('theme') in MODES else 'system')
+        self.theme = resolve(self.theme_mode.get())
+        self.palette = THEMES[self.theme]
+        self._theme_hooks = []
+        self._combos = []
+        self.style = ttk.Style(self)
+        self.style.theme_use('clam')
+        self._style(self.palette)
         self._build()
+        self.apply_theme()
         self._configure_engine(engine_path or self.settings.get('engine') or ROOT / 'tools' / 'luaudec.exe', quiet=True)
         self.after(100, self._poll)
+        self.after(2000, self._follow_system_theme)
         self.protocol('WM_DELETE_WINDOW', self.close)
         self.bind('<Control-o>', lambda e: self.open_folder())
         self.bind('<Control-f>', lambda e: self.focus_find())
@@ -135,31 +205,157 @@ class Explorer(tk.Tk):
         except (OSError, ValueError):
             return {}
 
-    def _style(self):
-        style = ttk.Style(self)
-        style.theme_use('clam')
-        style.configure('.', font=('Segoe UI', 10), background=PANEL, foreground=TEXT)
-        style.configure('TFrame', background=PANEL)
-        style.configure('TLabel', background=PANEL, foreground=TEXT)
-        style.configure('TButton', background=CARD, foreground=TEXT, borderwidth=0, padding=(14, 9))
-        style.map('TButton', background=[('active', '#33445b')], foreground=[('disabled', '#69798e')])
-        style.configure('Accent.TButton', background=ACCENT, foreground='#16202d')
-        style.map('Accent.TButton', background=[('active', '#ffca85')])
-        style.configure('TEntry', fieldbackground=BG, foreground=TEXT, insertcolor=TEXT, padding=8)
-        style.configure('TCombobox', fieldbackground=BG, background=CARD, foreground=TEXT, padding=6)
-        style.map('TCombobox', fieldbackground=[('readonly', BG)], foreground=[('readonly', TEXT)])
-        style.configure('Treeview', background=PANEL, fieldbackground=PANEL, foreground=TEXT,
-                        borderwidth=0, rowheight=30, font=('Segoe UI', 10))
-        style.configure('Treeview.Heading', background=CARD, foreground=MUTED, relief='flat', padding=8)
-        style.map('Treeview', background=[('selected', '#2a4561')], foreground=[('selected', '#ffffff')])
-        style.configure('TNotebook', background=BG, borderwidth=0)
-        style.configure('TNotebook.Tab', background=PANEL, foreground=MUTED, padding=(20, 11))
-        style.map('TNotebook.Tab', background=[('selected', CARD)], foreground=[('selected', ACCENT)])
-        style.configure('Horizontal.TProgressbar', troughcolor=CARD, background=GREEN, borderwidth=0)
-        self.option_add('*TCombobox*Listbox.background', PANEL)
-        self.option_add('*TCombobox*Listbox.foreground', TEXT)
+    def px(self, value):
+        return max(1, round(value * self.scale))
+
+    def _fonts(self):
+        families = set(tkfont.families(self))
+        mono = next((name for name in ('Cascadia Mono', 'Consolas') if name in families), 'Courier New')
+        ui, strong = 'Segoe UI', 'Segoe UI Semibold'
+        self.fonts = {'title': (strong, 17), 'heading': (strong, 14), 'stat': (strong, 20),
+                      'body': (ui, 10), 'small': (ui, 9), 'label': (strong, 9), 'button': (strong, 10),
+                      'brand': ('Segoe UI Black', 13), 'code': (mono, 11), 'gutter': (mono, 10)}
+
+    # Theme plumbing: widgets register a hook that receives the active palette.
+    def on_theme(self, hook):
+        self._theme_hooks.append(hook)
+        hook(self.palette)
+        return hook
+
+    def skin(self, widget, **roles):
+        """Bind widget options to palette tokens, e.g. skin(label, bg='surface', fg='muted')."""
+        self.on_theme(lambda t: widget.configure(**{option: t[token] for option, token in roles.items()}))
+        return widget
+
+    def focus_ring(self, holder, widget, rest):
+        """Draw a focus-coloured ring on `holder` while `widget` has keyboard focus."""
+        def paint(t=None):
+            t = t or self.palette
+            focused = self.focus_get() is widget
+            holder.configure(highlightbackground=t['focus'] if focused else t[rest],
+                             highlightcolor=t['focus'])
+        widget.bind('<FocusIn>', lambda e: paint(), add='+')
+        widget.bind('<FocusOut>', lambda e: paint(), add='+')
+        self.on_theme(paint)
+
+    def hover_rows(self, tree):
+        state = {'row': ''}
+        def mark(row, on):
+            if row and tree.exists(row):
+                tags = [tag for tag in tree.item(row, 'tags') or () if tag != 'hover']
+                tree.item(row, tags=tags + ['hover'] if on else tags)
+        def move(event):
+            row = tree.identify_row(event.y)
+            if row in tree.selection():
+                row = ''
+            if row != state['row']:
+                mark(state['row'], False)
+                mark(row, True)
+                state['row'] = row
+        def leave(_):
+            mark(state['row'], False)
+            state['row'] = ''
+        tree.bind('<Motion>', move, add='+')
+        tree.bind('<Leave>', leave, add='+')
+        tree.bind('<<TreeviewSelect>>', leave, add='+')
+        self.on_theme(lambda t: (tree.tag_configure('hover', background=t['hover']),
+                                 tree.tag_configure('Partiel', foreground=t['warning']),
+                                 tree.tag_configure('Échec', foreground=t['danger'])))
+
+    def set_theme(self, mode):
+        self.theme_mode.set(mode)
+        self.settings['theme'] = mode
+        self.save_settings()
+        self.apply_theme()
+
+    def apply_theme(self):
+        self.theme = resolve(self.theme_mode.get())
+        self.palette = t = THEMES[self.theme]
+        self.configure(bg=t['bg'])
+        self._style(t)
+        alive = []
+        for hook in self._theme_hooks:
+            try:
+                hook(t)
+                alive.append(hook)
+            except tk.TclError:  # the widget was destroyed, e.g. a closed search window
+                pass
+        self._theme_hooks = alive
+        set_title_bar(self, self.theme == 'dark')
+
+    def _follow_system_theme(self):
+        if self.theme_mode.get() == 'system' and resolve('system') != self.theme:
+            self.apply_theme()
+        self.after(2000, self._follow_system_theme)
+
+    def _style(self, t):
+        style, px = self.style, self.px
+        flat = lambda color: dict(background=color, lightcolor=color, darkcolor=color)
+        style.configure('.', font=self.fonts['body'], foreground=t['text'], troughcolor=t['surface'],
+                        bordercolor=t['border'], focuscolor=t['focus'], selectbackground=t['selection'],
+                        selectforeground=t['on_selection'], insertcolor=t['text'], fieldbackground=t['bg'],
+                        **flat(t['surface']))
+        style.configure('TFrame', background=t['surface'])
+        style.configure('TLabel', background=t['surface'], foreground=t['text'])
+        style.configure('TButton', foreground=t['text'], bordercolor=t['border'], focusthickness=2,
+                        padding=(px(16), px(11)), font=self.fonts['button'], anchor='center', **flat(t['raised']))
+        states = lambda base, hover, pressed: [('disabled', base), ('pressed', pressed), ('active', hover)]
+        for option in ('background', 'lightcolor', 'darkcolor'):
+            style.map('TButton', **{option: states(t['raised'], t['hover'], t['pressed'])})
+            style.map('Accent.TButton', **{option: states(t['accent'], t['accent_hover'], t['accent_hover'])})
+        style.map('TButton', foreground=[('disabled', t['disabled'])], bordercolor=[('focus', t['focus'])])
+        style.configure('Accent.TButton', foreground=t['on_accent'], bordercolor=t['accent'], **flat(t['accent']))
+        style.map('Accent.TButton', foreground=[('disabled', t['on_accent'])], bordercolor=[('focus', t['focus'])])
+        field = dict(fieldbackground=t['bg'], foreground=t['text'], insertcolor=t['text'],
+                     bordercolor=t['border'], lightcolor=t['bg'], darkcolor=t['bg'])
+        style.configure('TEntry', padding=(px(10), px(12)), **field)
+        style.map('TEntry', bordercolor=[('focus', t['focus'])], lightcolor=[('focus', t['focus'])])
+        style.configure('TCombobox', padding=(px(10), px(12)), background=t['raised'], arrowcolor=t['text'],
+                        arrowsize=px(14), **field)
+        style.map('TCombobox', fieldbackground=[('readonly', t['bg'])], foreground=[('readonly', t['text'])],
+                  background=[('active', t['hover'])], bordercolor=[('focus', t['focus'])],
+                  lightcolor=[('focus', t['focus'])], arrowcolor=[('disabled', t['disabled'])],
+                  selectbackground=[('readonly', t['bg'])], selectforeground=[('readonly', t['text'])])
+        style.configure('Treeview', foreground=t['text'], fieldbackground=t['surface'], borderwidth=0,
+                        rowheight=px(36), font=self.fonts['body'], bordercolor=t['surface'], **flat(t['surface']))
+        style.map('Treeview', background=[('selected', t['selection'])], foreground=[('selected', t['on_selection'])])
+        style.configure('Treeview.Heading', foreground=t['muted'], relief='flat', padding=(px(10), px(9)),
+                        font=self.fonts['label'], bordercolor=t['border'], **flat(t['raised']))
+        style.map('Treeview.Heading', background=[('active', t['hover'])], foreground=[('active', t['text'])])
+        style.configure('TNotebook', borderwidth=0, bordercolor=t['surface'], tabmargins=(px(8), px(8), px(8), 0),
+                        **flat(t['surface']))
+        style.configure('TNotebook.Tab', foreground=t['muted'], padding=(px(18), px(12)), font=self.fonts['button'],
+                        bordercolor=t['surface'], **flat(t['surface']))
+        style.map('TNotebook.Tab', padding=[('selected', (px(18), px(12)))], expand=[('selected', (0, 0, 0, 0))],
+                  foreground=[('selected', t['accent_text']), ('active', t['text'])],
+                  background=[('selected', t['raised']), ('active', t['hover'])],
+                  lightcolor=[('selected', t['raised']), ('active', t['hover'])],
+                  bordercolor=[('selected', t['border'])])
+        style.configure('TScrollbar', troughcolor=t['surface'], bordercolor=t['surface'], arrowcolor=t['muted'],
+                        gripcount=0, arrowsize=px(14), **flat(t['raised']))
+        style.map('TScrollbar', background=[('active', t['hover'])], lightcolor=[('active', t['hover'])],
+                  darkcolor=[('active', t['hover'])])
+        style.configure('Horizontal.TProgressbar', troughcolor=t['raised'], bordercolor=t['raised'],
+                        thickness=px(8), **flat(t['success']))
+        # Classic Tk dialogs (simpledialog) and combobox lists read the option database.
+        for pattern, token in [('*background', 'surface'), ('*foreground', 'text'), ('*activeBackground', 'hover'),
+                               ('*activeForeground', 'text'), ('*selectBackground', 'selection'),
+                               ('*selectForeground', 'on_selection'), ('*insertBackground', 'text'),
+                               ('*highlightBackground', 'surface'), ('*highlightColor', 'focus')]:
+            self.option_add(pattern, t[token])
+        self.option_add('*TCombobox*Listbox.font', self.fonts['body'])
+        for combo in self._combos:
+            popdown = self.tk.call('ttk::combobox::PopdownWindow', combo)
+            self.tk.call(f'{popdown}.f.l', 'configure', '-background', t['surface'], '-foreground', t['text'],
+                         '-selectbackground', t['selection'], '-selectforeground', t['on_selection'])
+
+    def _combo(self, parent, **kwargs):
+        combo = ttk.Combobox(parent, state='readonly', font=self.fonts['body'], **kwargs)
+        self._combos.append(combo)
+        return combo
 
     def _build(self):
+        px, skin = self.px, self.skin
         menu = tk.Menu(self, tearoff=False)
         filemenu = tk.Menu(menu, tearoff=False)
         for label, action in [('Ouvrir une capture…', self.open_folder), ('Ouvrir un manifeste ou bytecode…', self.open_file),
@@ -171,149 +367,191 @@ class Explorer(tk.Tk):
         engine_menu.add_command(label='Choisir luaudec.exe…', command=self.choose_engine)
         engine_menu.add_command(label='Instructions de construction', command=self.backend_help)
         menu.add_cascade(label='Moteur', menu=engine_menu)
+        view_menu = tk.Menu(menu, tearoff=False)
+        for label, mode in [('Suivre le thème de Windows', 'system'), ('Thème clair', 'light'), ('Thème sombre', 'dark')]:
+            view_menu.add_radiobutton(label=label, value=mode, variable=self.theme_mode,
+                                      command=lambda mode=mode: self.set_theme(mode))
+        menu.add_cascade(label='Affichage', menu=view_menu)
         self.configure(menu=menu)
 
-        top = tk.Frame(self, bg=BG, padx=25, pady=20)
+        # Header: brand, engine state and theme switch.
+        top = skin(tk.Frame(self, padx=px(24), pady=px(16)), bg='bg')
         top.pack(fill='x')
-        tk.Label(top, text='RSE', bg=ACCENT, fg='#10151e', padx=13, pady=10,
-                 font=('Segoe UI', 16, 'bold')).pack(side='left', padx=(0, 15))
-        brand = tk.Frame(top, bg=BG)
+        skin(tk.Label(top, text='RSE', padx=px(10), pady=px(8), font=self.fonts['brand']),
+             bg='accent', fg='on_accent').pack(side='left', padx=(0, px(14)))
+        brand = skin(tk.Frame(top), bg='bg')
         brand.pack(side='left')
-        tk.Label(brand, text='Roblox Script Explorer', bg=BG, fg=TEXT,
-                 font=('Segoe UI', 19, 'bold')).pack(anchor='w')
-        tk.Label(brand, text='CAPTURER  /  COMPRENDRE  /  EXPLORER', bg=BG, fg=MUTED,
-                 font=('Segoe UI', 9)).pack(anchor='w', pady=(3, 0))
-        self.engine_label = tk.Label(top, text='MOTEUR NON CONFIGURÉ', bg=BG, fg=ACCENT, font=('Segoe UI', 9, 'bold'))
-        self.engine_label.pack(side='right')
+        skin(tk.Label(brand, text='Roblox Script Explorer', font=self.fonts['title']), bg='bg', fg='text').pack(anchor='w')
+        skin(tk.Label(brand, text='Capturer, comprendre et explorer les scripts Luau localement',
+                      font=self.fonts['small']), bg='bg', fg='muted').pack(anchor='w')
+        ThemeSwitch(top, self).pack(side='right')
+        self.engine_label = tk.Label(top, font=self.fonts['label'], padx=px(12), pady=px(6))
+        self.engine_label.pack(side='right', padx=px(16))
+        self.on_theme(lambda t: self._paint_engine())
 
-        toolbar = tk.Frame(self, bg=PANEL, padx=18, pady=10)
-        toolbar.pack(fill='x', padx=20)
+        # Toolbar: one primary action, secondary actions, then mode and stop.
+        toolbar = skin(tk.Frame(self, padx=px(12), pady=px(10), highlightthickness=1),
+                       bg='surface', highlightbackground='border', highlightcolor='border')
+        toolbar.pack(fill='x', padx=px(24))
         for label, action, accent in [('Ouvrir capture', self.open_folder, True), ('Capturer Roblox', self.live_capture, False),
                                       ('Décompiler tout', self.decompile_all, False), ('Exporter', self.export_project, False)]:
-            ttk.Button(toolbar, text=label, command=action, style='Accent.TButton' if accent else 'TButton').pack(side='left', padx=4)
-        ttk.Button(toolbar, text='Arrêter', command=self.stop).pack(side='right', padx=4)
-        self.encoding_combo = ttk.Combobox(toolbar, textvariable=self.encoding, values=('roblox', 'standard', 'auto'),
-                                           state='readonly', width=11)
-        self.encoding_combo.pack(side='right', padx=10)
+            ttk.Button(toolbar, text=label, command=action, style='Accent.TButton' if accent else 'TButton').pack(side='left', padx=px(4))
+        ttk.Button(toolbar, text='Arrêter', command=self.stop).pack(side='right', padx=px(4))
+        self.encoding_combo = self._combo(toolbar, textvariable=self.encoding, values=('roblox', 'standard', 'auto'), width=10)
+        self.encoding_combo.pack(side='right', padx=(px(4), px(12)))
+        skin(tk.Label(toolbar, text='Mode', font=self.fonts['small']), bg='surface', fg='muted').pack(side='right')
         self.encoding.trace_add('write', self.encoding_changed)
 
-        cards = tk.Frame(self, bg=BG, padx=25, pady=15)
+        # Summary cards.
+        cards = skin(tk.Frame(self, padx=px(20), pady=px(14)), bg='bg')
         cards.pack(fill='x')
         self.count_labels = []
-        for title, value in [('SCRIPTS', '—'), ('CONTENUS DISTINCTS', '—'), ('CODE RECONSTRUIT', '—'), ('À EXAMINER', '—')]:
-            cell = tk.Frame(cards, bg=BG)
-            cell.pack(side='left', fill='x', expand=True)
-            label = tk.Label(cell, text=value, bg=BG, fg=TEXT, font=('Segoe UI', 22, 'bold'))
+        for title in ('Scripts', 'Contenus distincts', 'Code reconstruit', 'À examiner'):
+            cell = skin(tk.Frame(cards, padx=px(16), pady=px(10), highlightthickness=1),
+                        bg='surface', highlightbackground='border', highlightcolor='border')
+            cell.pack(side='left', fill='x', expand=True, padx=px(4))
+            label = skin(tk.Label(cell, text='—', font=self.fonts['stat']), bg='surface', fg='text')
             label.pack(anchor='w')
-            tk.Label(cell, text=title, bg=BG, fg=MUTED, font=('Segoe UI', 8, 'bold')).pack(anchor='w')
+            skin(tk.Label(cell, text=title, font=self.fonts['small']), bg='surface', fg='muted').pack(anchor='w')
             self.count_labels.append(label)
 
-        self.panes = tk.PanedWindow(self, orient='horizontal', bg=BG, sashwidth=7, borderwidth=0)
-        self.panes.pack(fill='both', expand=True, padx=20)
-        left = tk.Frame(self.panes, bg=PANEL)
-        self.panes.add(left, minsize=260, width=355)
-        self.capture_label = tk.Label(left, text='AUCUNE CAPTURE', bg=PANEL, fg=MUTED, anchor='w', padx=15, pady=12,
-                                      font=('Segoe UI', 9, 'bold'))
+        self.panes = skin(tk.PanedWindow(self, orient='horizontal', sashwidth=px(12), borderwidth=0, sashcursor='sb_h_double_arrow'),
+                          bg='bg')
+        self.panes.pack(fill='both', expand=True, padx=px(24))
+
+        # Left column: filters and script tree.
+        left = skin(tk.Frame(self.panes, highlightthickness=1), bg='surface', highlightbackground='border', highlightcolor='border')
+        self.panes.add(left, minsize=px(280), width=px(370))
+        heading = skin(tk.Frame(left, padx=px(14), pady=px(12)), bg='surface')
+        heading.pack(fill='x')
+        skin(tk.Label(heading, text='Explorateur', font=self.fonts['heading']), bg='surface', fg='text').pack(anchor='w')
+        self.capture_label = skin(tk.Label(heading, text='Aucune capture ouverte', anchor='w', font=self.fonts['small']),
+                                  bg='surface', fg='muted')
         self.capture_label.pack(fill='x')
-        searchrow = tk.Frame(left, bg=PANEL, padx=10)
+        searchrow = skin(tk.Frame(left, padx=px(14)), bg='surface')
         searchrow.pack(fill='x')
-        entry = ttk.Entry(searchrow, textvariable=self.filter)
-        entry.pack(fill='x', pady=(0, 8))
-        ttk.Combobox(searchrow, textvariable=self.kind_filter,
-                     values=('Tous', 'LocalScript', 'ModuleScript', 'Reconstruit', 'Partiel', 'Échec'),
-                     state='readonly').pack(fill='x', pady=(0, 8))
-        ttk.Button(searchrow, text='Rechercher dans le code…', command=self.global_search).pack(fill='x', pady=(0, 8))
+        skin(tk.Label(searchrow, text='Filtrer par nom ou chemin', font=self.fonts['small']),
+             bg='surface', fg='muted').pack(anchor='w', pady=(0, px(4)))
+        entry = ttk.Entry(searchrow, textvariable=self.filter, font=self.fonts['body'])
+        entry.pack(fill='x', pady=(0, px(10)))
+        skin(tk.Label(searchrow, text='Classe ou état', font=self.fonts['small']),
+             bg='surface', fg='muted').pack(anchor='w', pady=(0, px(4)))
+        self._combo(searchrow, textvariable=self.kind_filter,
+                    values=('Tous', 'LocalScript', 'ModuleScript', 'Reconstruit', 'Partiel', 'Échec')).pack(fill='x', pady=(0, px(10)))
+        ttk.Button(searchrow, text='Rechercher dans le code…', command=self.global_search).pack(fill='x', pady=(0, px(12)))
         self.filter.trace_add('write', self.filter_changed)
         self.kind_filter.trace_add('write', self.filter_changed)
-        treeframe = tk.Frame(left, bg=PANEL)
-        treeframe.pack(fill='both', expand=True)
+        treeframe = tk.Frame(left, highlightthickness=px(2))
+        treeframe.pack(fill='both', expand=True, padx=px(4), pady=(0, px(4)))
         scroll = ttk.Scrollbar(treeframe)
         scroll.pack(side='right', fill='y')
         self.tree = ttk.Treeview(treeframe, columns=('status',), show='tree headings', yscrollcommand=scroll.set,
                                  selectmode='browse')
-        self.tree.heading('#0', text='ARBORESCENCE')
-        self.tree.heading('status', text='ÉTAT')
-        self.tree.column('#0', width=220, minwidth=100)
-        self.tree.column('status', width=95, minwidth=80, stretch=False)
+        self.tree.heading('#0', text='Scripts', anchor='w')
+        self.tree.heading('status', text='État', anchor='w')
+        self.tree.column('#0', width=px(220), minwidth=px(100))
+        self.tree.column('status', width=px(110), minwidth=px(90), stretch=False)
         self.tree.pack(fill='both', expand=True)
         scroll.configure(command=self.tree.yview)
         self.tree.bind('<<TreeviewSelect>>', self.select_script)
-        self.tree.tag_configure('Partiel', foreground=ACCENT)
-        self.tree.tag_configure('Échec', foreground='#f298a5')
+        self.hover_rows(self.tree)
+        self.focus_ring(treeframe, self.tree, 'surface')
 
-        right = tk.Frame(self.panes, bg=BG)
-        self.panes.add(right, minsize=620)
-        header = tk.Frame(right, bg=PANEL, padx=18, pady=14)
-        header.pack(fill='x')
-        self.script_label = tk.Label(header, text='Votre espace d’analyse', bg=PANEL, fg=TEXT,
-                                     font=('Segoe UI', 15, 'bold'), anchor='w')
+        # Right column: script header and tabs.
+        right = skin(tk.Frame(self.panes), bg='bg')
+        self.panes.add(right, minsize=px(620))
+        header = skin(tk.Frame(right, padx=px(18), pady=px(12), highlightthickness=1),
+                      bg='surface', highlightbackground='border', highlightcolor='border')
+        header.pack(fill='x', pady=(0, px(10)))
+        self.script_label = skin(tk.Label(header, text='Votre espace d’analyse', font=self.fonts['heading'], anchor='w'),
+                                 bg='surface', fg='text')
         self.script_label.pack(fill='x')
-        self.path_label = tk.Label(header, text='Ouvrez un dossier de capture ou un fichier .luac.', bg=PANEL,
-                                   fg=MUTED, anchor='w', font=('Segoe UI', 9), wraplength=850)
-        self.path_label.pack(fill='x', pady=(5, 0))
-        self.notebook = ttk.Notebook(right)
+        self.path_label = skin(tk.Label(header, text='Ouvrez un dossier de capture ou un fichier .luac.',
+                                        anchor='w', justify='left', font=self.fonts['small'], wraplength=px(850)),
+                               bg='surface', fg='muted')
+        self.path_label.pack(fill='x', pady=(px(2), 0))
+        body = skin(tk.Frame(right, highlightthickness=1), bg='surface', highlightbackground='border', highlightcolor='border')
+        body.pack(fill='both', expand=True)
+        self.notebook = ttk.Notebook(body)
         self.notebook.pack(fill='both', expand=True)
         code_tab = ttk.Frame(self.notebook)
         self.notebook.add(code_tab, text='Code Luau')
-        findbar = tk.Frame(code_tab, bg=PANEL, padx=10, pady=7)
+        findbar = skin(tk.Frame(code_tab, padx=px(10), pady=px(8)), bg='surface')
         findbar.pack(fill='x')
         self.find_text = tk.StringVar()
-        self.find_entry = ttk.Entry(findbar, textvariable=self.find_text, width=28)
-        self.find_entry.pack(side='left', padx=(0, 8))
+        self.find_entry = ttk.Entry(findbar, textvariable=self.find_text, width=28, font=self.fonts['body'])
+        self.find_entry.pack(side='left', padx=(0, px(8)))
         self.find_entry.bind('<Return>', lambda e: self.find_next())
         ttk.Button(findbar, text='Suivant', command=self.find_next).pack(side='left')
-        ttk.Button(findbar, text='Aller à la ligne', command=self.go_line).pack(side='left', padx=6)
+        ttk.Button(findbar, text='Aller à la ligne', command=self.go_line).pack(side='left', padx=px(8))
         ttk.Button(findbar, text='Exporter .luau', command=self.export_source).pack(side='right')
-        self.code = CodeView(code_tab)
+        self.code = CodeView(code_tab, self)
         self.code.pack(fill='both', expand=True)
         self.code.show('-- Bienvenue dans Roblox Script Explorer.\n\n-- Ouvrez une capture pour explorer son arborescence.\n-- Choisissez un script pour reconstruire son code localement.\n-- Aucun script récupéré n’est exécuté.', True)
 
-        analysis_tab = tk.Frame(self.notebook, bg=PANEL)
+        analysis_tab = skin(tk.Frame(self.notebook), bg='surface')
         self.notebook.add(analysis_tab, text='Analyse')
-        self.analysis_text = self._text(analysis_tab, font=('Segoe UI', 11), height=15)
-        self.analysis_text.pack(fill='both', expand=True, padx=15, pady=12)
-        tk.Label(analysis_tab, text='DÉPENDANCES INFÉRÉES · double-cliquez pour ouvrir un chemin résolu',
-                 bg=PANEL, fg=MUTED, anchor='w', padx=15, pady=10).pack(fill='x')
-        self.dependencies = ttk.Treeview(analysis_tab, columns=('expression', 'resolution'), show='headings', height=7)
-        self.dependencies.heading('expression', text='require(...)')
-        self.dependencies.heading('resolution', text='Résolution statique')
-        self.dependencies.column('expression', width=450)
-        self.dependencies.column('resolution', width=190)
-        self.dependencies.pack(fill='x', padx=15, pady=(0, 15))
+        # The dependency table is packed first, from the bottom, so the text never squeezes it out.
+        self.dependencies = ttk.Treeview(analysis_tab, columns=('expression', 'resolution'), show='headings', height=4)
+        self.dependencies.heading('expression', text='require(...)', anchor='w')
+        self.dependencies.heading('resolution', text='Résolution statique', anchor='w')
+        self.dependencies.column('expression', width=px(450))
+        self.dependencies.column('resolution', width=px(190))
+        self.dependencies.pack(side='bottom', fill='x', padx=px(14), pady=(0, px(14)))
+        skin(tk.Label(analysis_tab, text='Dépendances inférées · double-cliquez pour ouvrir un chemin résolu',
+                      anchor='w', padx=px(16), pady=px(8), font=self.fonts['label']),
+             bg='surface', fg='muted').pack(side='bottom', fill='x')
+        self.analysis_text = self._text(analysis_tab, font=self.fonts['body'], height=6, spacing1=2, spacing3=2)
+        self.analysis_text.pack(fill='both', expand=True, padx=px(14), pady=px(12))
+        self.on_theme(lambda t: self.analysis_text.tag_configure('heading', foreground=t['accent_text'],
+                                                                 font=self.fonts['label'], spacing1=px(6)))
         self.dependencies.bind('<Double-1>', self.open_dependency)
+        self.hover_rows(self.dependencies)
         self.dep_targets = {}
 
         constants_tab = ttk.Frame(self.notebook)
         self.notebook.add(constants_tab, text='Constantes')
         self.constants = ttk.Treeview(constants_tab, columns=('function', 'kind', 'value'), show='headings')
         for key, title, width in [('function', 'Fonction', 180), ('kind', 'Type', 100), ('value', 'Valeur', 650)]:
-            self.constants.heading(key, text=title)
-            self.constants.column(key, width=width, stretch=key == 'value')
+            self.constants.heading(key, text=title, anchor='w')
+            self.constants.column(key, width=px(width), stretch=key == 'value')
         const_scroll = ttk.Scrollbar(constants_tab, command=self.constants.yview)
         const_scroll.pack(side='right', fill='y')
         self.constants.configure(yscrollcommand=const_scroll.set)
         self.constants.pack(fill='both', expand=True)
+        self.hover_rows(self.constants)
 
         disasm_tab = ttk.Frame(self.notebook)
         self.notebook.add(disasm_tab, text='Désassemblage')
-        self.disasm = CodeView(disasm_tab)
+        self.disasm = CodeView(disasm_tab, self)
         self.disasm.pack(fill='both', expand=True)
         meta_tab = ttk.Frame(self.notebook)
         self.notebook.add(meta_tab, text='Métadonnées')
-        self.meta = self._text(meta_tab, font=('Consolas', 10))
-        self.meta.pack(fill='both', expand=True, padx=12, pady=12)
+        self.meta = self._text(meta_tab, font=self.fonts['gutter'], bg_token='code_bg')
+        self.meta.pack(fill='both', expand=True, padx=px(12), pady=px(12))
         self.notebook.bind('<<NotebookTabChanged>>', self.tab_changed)
 
-        bottom = tk.Frame(self, bg=BG, padx=22, pady=10)
+        bottom = skin(tk.Frame(self, padx=px(24), pady=px(10)), bg='bg')
         bottom.pack(side='bottom', before=self.panes, fill='x')
-        self.progress = ttk.Progressbar(bottom, mode='determinate', length=200)
-        self.progress.pack(side='right', padx=10)
-        tk.Label(bottom, textvariable=self.status, bg=BG, fg=MUTED, anchor='w').pack(side='left', fill='x', expand=True)
+        self.progress = ttk.Progressbar(bottom, mode='determinate', length=px(220))
+        self.progress.pack(side='right', padx=(px(10), 0))
+        skin(tk.Label(bottom, textvariable=self.status, anchor='w', font=self.fonts['body']),
+             bg='bg', fg='muted').pack(side='left', fill='x', expand=True)
         self._filter_after = None
 
-    def _text(self, parent, **kwargs):
-        return tk.Text(parent, bg=PANEL, fg=TEXT, relief='flat', wrap='word', padx=7, pady=7,
-                       selectbackground='#365473', state='disabled', **kwargs)
+    def _text(self, parent, bg_token='surface', **kwargs):
+        widget = tk.Text(parent, relief='flat', wrap='word', padx=self.px(8), pady=self.px(8),
+                         highlightthickness=self.px(2), state='disabled', **kwargs)
+        self.skin(widget, bg=bg_token, fg='text', insertbackground='text', selectbackground='selection',
+                  selectforeground='on_selection', inactiveselectbackground='selection')
+        self.focus_ring(widget, widget, bg_token)
+        return widget
+
+    def _paint_engine(self):
+        t = self.palette
+        ready = self.engine is not None
+        self.engine_label.configure(text='●  Moteur local prêt' if ready else '●  Moteur à configurer',
+                                    bg=t['surface'], fg=t['success'] if ready else t['warning'])
 
     def text_set(self, widget, content):
         widget.configure(state='normal')
@@ -325,12 +563,12 @@ class Explorer(tk.Tk):
         try:
             self.engine = Decompiler(Path(path), self.local / 'cache', ROOT / 'tools' / 'luau-compile.exe')
             self.settings['engine'] = str(self.engine.executable)
-            self.engine_label.configure(text='●  MOTEUR LOCAL PRÊT', fg=GREEN)
+            self._paint_engine()
             self.save_settings()
             return True
         except (ExplorerError, OSError) as exc:
             self.engine = None
-            self.engine_label.configure(text='MOTEUR À CONFIGURER', fg=ACCENT)
+            self._paint_engine()
             if not quiet:
                 messagebox.showerror('Décompilateur', str(exc), parent=self)
             return False
@@ -395,7 +633,7 @@ class Explorer(tk.Tk):
         self.records = {item.id: item for item in capture.scripts}
         self.settings['capture'] = str(selected_path)
         self.save_settings()
-        self.capture_label.configure(text='CAPTURE · ' + capture.build.replace('version-', '')[:22])
+        self.capture_label.configure(text='Capture · ' + capture.build.replace('version-', '')[:22])
         self.filter.set('')
         self.rebuild_tree()
         self.update_counts()
@@ -505,6 +743,9 @@ class Explorer(tk.Tk):
         if item.diagnostics:
             content += '\nDIAGNOSTICS\n' + '\n'.join(item.diagnostics[:30])
         self.text_set(self.analysis_text, content)
+        for number, line in enumerate(content.splitlines(), 1):
+            if line.isupper() and not line.startswith(' '):
+                self.analysis_text.tag_add('heading', f'{number}.0', f'{number}.end')
         self.dependencies.delete(*self.dependencies.get_children())
         self.dep_targets = {}
         for index, dep in enumerate(resolve_dependencies(item, self.capture)):
@@ -651,17 +892,21 @@ class Explorer(tk.Tk):
                                         'Texte à rechercher dans les scripts déjà décompilés :', parent=self)
         if not query:
             return
+        px = self.px
         window = tk.Toplevel(self)
         window.title('Recherche globale · ' + query)
-        window.geometry('1000x530')
-        window.configure(bg=PANEL)
-        tk.Label(window, text='Recherche littérale · 500 résultats maximum · code déjà décompilé',
-                 bg=PANEL, fg=MUTED, padx=15, pady=15).pack(fill='x')
+        window.geometry(f'{px(1000)}x{px(530)}')
+        self.skin(window, bg='surface')
+        self.skin(tk.Label(window, text='Recherche littérale · 500 résultats maximum · code déjà décompilé',
+                           anchor='w', padx=px(16), pady=px(14), font=self.fonts['small']),
+                  bg='surface', fg='muted').pack(fill='x')
         table = ttk.Treeview(window, columns=('path', 'line', 'code'), show='headings')
         for key, title, width in [('path', 'Script', 360), ('line', 'Ligne', 60), ('code', 'Extrait', 550)]:
-            table.heading(key, text=title)
-            table.column(key, width=width)
-        table.pack(fill='both', expand=True, padx=12, pady=12)
+            table.heading(key, text=title, anchor='w')
+            table.column(key, width=px(width))
+        table.pack(fill='both', expand=True, padx=px(12), pady=(0, px(12)))
+        self.hover_rows(table)
+        self.on_theme(lambda t: set_title_bar(window, self.theme == 'dark'))
         hits = {}
         for script in self.capture.scripts:
             for line, source in enumerate(script.source.splitlines(), 1):

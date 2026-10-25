@@ -44,6 +44,8 @@ Le moteur externe est téléchargé et construit localement à partir des commit
 
 Raccourcis : `Ctrl+O` ouvrir une capture, `Ctrl+F` recherche dans le code, `Ctrl+G` aller à la ligne, `Ctrl+S` exporter le script affiché.
 
+L'interface suit par défaut le thème clair ou sombre de Windows. L'interrupteur **Thème sombre** de l'en-tête (clic, ou `Tab` puis `Espace`) et le menu **Affichage** permettent d'en choisir un autre ; ce choix est conservé dans `.local/settings.json`. Les couleurs sont définies dans `explorer_theme.py`.
+
 ## États de reconstruction
 
 | État | Signification |
